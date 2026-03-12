@@ -10,7 +10,6 @@ from telegram.ext import (
     filters,
 )
 
-# VARIABLES DE ENTORNO (RAILWAY)
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID"))
 OWNER_ID = int(os.getenv("OWNER_ID"))
@@ -60,6 +59,11 @@ async def registrar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if user.is_bot:
         return
+
+    cursor.execute(
+        "INSERT OR IGNORE INTO usuarios VALUES (?, ?)",
+        (user.id, datetime.utcnow())
+    )
 
     cursor.execute(
         "INSERT INTO mensajes VALUES (?, ?)",
@@ -135,6 +139,89 @@ async def forzar_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Revisión ejecutada.")
 
 
+async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    limite = datetime.utcnow() - timedelta(days=4)
+
+    cursor.execute("""
+    SELECT user_id, COUNT(*)
+    FROM mensajes
+    WHERE timestamp > ?
+    GROUP BY user_id
+    ORDER BY COUNT(*) DESC
+    LIMIT 10
+    """, (limite,))
+
+    resultados = cursor.fetchall()
+
+    texto = "🔥 Usuarios más activos:\n\n"
+
+    for user_id, mensajes in resultados:
+
+        try:
+            member = await context.bot.get_chat_member(CHAT_ID, user_id)
+            nombre = member.user.full_name
+        except:
+            nombre = str(user_id)
+
+        texto += f"{nombre} — {mensajes} mensajes\n"
+
+    await update.message.reply_text(texto)
+
+
+async def inactivos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    limite = datetime.utcnow() - timedelta(days=4)
+
+    cursor.execute("""
+    SELECT user_id, COUNT(*)
+    FROM mensajes
+    WHERE timestamp > ?
+    GROUP BY user_id
+    """, (limite,))
+
+    actividad = {row[0]: row[1] for row in cursor.fetchall()}
+
+    cursor.execute("SELECT user_id FROM usuarios")
+    usuarios = cursor.fetchall()
+
+    texto = "⚠️ Usuarios en riesgo de expulsión:\n\n"
+
+    for (user_id,) in usuarios:
+
+        mensajes = actividad.get(user_id, 0)
+
+        if mensajes < 15:
+
+            try:
+                member = await context.bot.get_chat_member(CHAT_ID, user_id)
+                nombre = member.user.full_name
+            except:
+                nombre = str(user_id)
+
+            texto += f"{nombre} — {mensajes} mensajes\n"
+
+    await update.message.reply_text(texto)
+
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    cursor.execute("SELECT COUNT(*) FROM usuarios")
+    total_usuarios = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM mensajes")
+    total_mensajes = cursor.fetchone()[0]
+
+    texto = f"""
+📊 Estadísticas del grupo
+
+Usuarios registrados: {total_usuarios}
+Mensajes registrados: {total_mensajes}
+"""
+
+    await update.message.reply_text(texto)
+
+
 def main():
 
     app = ApplicationBuilder().token(TOKEN).build()
@@ -147,9 +234,10 @@ def main():
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, registrar_usuario)
     )
 
-    app.add_handler(
-        CommandHandler("forzar_revision", forzar_revision)
-    )
+    app.add_handler(CommandHandler("forzar_revision", forzar_revision))
+    app.add_handler(CommandHandler("top", top))
+    app.add_handler(CommandHandler("inactivos", inactivos))
+    app.add_handler(CommandHandler("stats", stats))
 
     app.job_queue.run_repeating(
         revisar_actividad,

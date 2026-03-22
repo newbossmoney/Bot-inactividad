@@ -34,8 +34,17 @@ join_date DATETIME
 conn.commit()
 
 
-def es_dueno(update: Update):
-    return update.effective_user.id == OWNER_ID
+# 🔐 VALIDAR ADMIN / OWNER
+async def es_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if user_id == OWNER_ID:
+        return True
+
+    admins = await context.bot.get_chat_administrators(CHAT_ID)
+    admin_ids = [a.user.id for a in admins]
+
+    return user_id in admin_ids
 
 
 # REGISTRAR USUARIOS NUEVOS
@@ -51,7 +60,7 @@ async def registrar_usuario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
 
 
-# REGISTRAR MENSAJES (incluye usuarios antiguos)
+# REGISTRAR MENSAJES
 async def registrar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
@@ -128,19 +137,22 @@ async def revisar_actividad(context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
 
 
-# COMANDO MANUAL
+# COMANDO FORZAR
 async def forzar_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if not es_dueno(update):
+    if not await es_admin(update, context):
+        await update.message.reply_text("❌ No tienes permisos.")
         return
 
     await revisar_actividad(context)
-
     await update.message.reply_text("✅ Revisión ejecutada.")
 
 
 # TOP 50
 async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not await es_admin(update, context):
+        return
 
     limite = datetime.utcnow() - timedelta(days=7)
 
@@ -170,8 +182,11 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(texto)
 
 
-# USUARIOS EN RIESGO
+# INACTIVOS
 async def inactivos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not await es_admin(update, context):
+        return
 
     limite = datetime.utcnow() - timedelta(days=7)
 
@@ -187,7 +202,7 @@ async def inactivos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT user_id FROM usuarios")
     usuarios = cursor.fetchall()
 
-    texto = "⚠️ Usuarios en riesgo de expulsión:\n\n"
+    texto = "⚠️ Usuarios en riesgo:\n\n"
 
     for (user_id,) in usuarios:
 
@@ -206,8 +221,11 @@ async def inactivos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(texto)
 
 
-# ESTADÍSTICAS
+# STATS
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not await es_admin(update, context):
+        return
 
     cursor.execute("SELECT COUNT(*) FROM usuarios")
     total_usuarios = cursor.fetchone()[0]
@@ -216,10 +234,10 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_mensajes = cursor.fetchone()[0]
 
     texto = f"""
-📊 Estadísticas del grupo
+📊 Estadísticas
 
-Usuarios registrados: {total_usuarios}
-Mensajes registrados: {total_mensajes}
+Usuarios: {total_usuarios}
+Mensajes: {total_mensajes}
 """
 
     await update.message.reply_text(texto)
@@ -228,11 +246,13 @@ Mensajes registrados: {total_mensajes}
 # LISTA COMPLETA
 async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    if not await es_admin(update, context):
+        return
+
     cursor.execute("SELECT user_id FROM usuarios")
     usuarios = cursor.fetchall()
 
-    texto = "📋 Lista de usuarios registrados:\n\n"
-
+    texto = "📋 Lista de usuarios:\n\n"
     contador = 0
 
     for (user_id,) in usuarios:
